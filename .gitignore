@@ -1,0 +1,11 @@
+.venv/
+__pycache__/
+*.pyc
+data/source/
+data/items/
+experiments/
+*.onnx
+.env
+.superpowers/
+*.egg-info/
+data/xgen/

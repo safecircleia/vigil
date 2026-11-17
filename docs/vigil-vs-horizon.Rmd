@@ -1,0 +1,729 @@
+---
+title: "Vigil vs Horizon: a comparison and an improvement plan"
+subtitle: "SafeCircle child-safety risk classifiers, state of the evidence on 2026-10-01"
+author: "SafeCircle research"
+date: "2026-10-01"
+output:
+  html_document:
+    toc: true
+    toc_depth: 3
+    toc_float: true
+    number_sections: true
+    theme: flatly
+    highlight: tango
+    self_contained: true
+    css: assets/style.css
+    includes:
+      before_body: assets/masthead.html
+      after_body: assets/footer.html
+  pdf_document:
+    toc: true
+    toc_depth: 2
+    number_sections: true
+    latex_engine: xelatex
+    highlight: tango
+    includes:
+      in_header: assets/header.tex
+      before_body: assets/titlepage.tex
+fontsize: 10pt
+geometry: margin=2.2cm
+colorlinks: true
+linkcolor: black
+urlcolor: blue
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE, message = FALSE, warning = FALSE,
+                      fig.width = 8, fig.height = 4.2, dpi = 130,
+                      # cairo devices find system fonts (Geist) through fontconfig
+                      dev = if (knitr::is_html_output()) "png" else "cairo_pdf",
+                      dev.args = if (knitr::is_html_output()) list(type = "cairo") else list())
+# pipe tables let pandoc wrap long cells in PDF output
+if (!knitr::is_html_output()) options(knitr.table.format = "pipe")
+library(dplyr)
+library(tidyr)
+library(ggplot2)
+
+pal <- c("Vigil (2-pass, 3 seeds)" = "#1b6ca8",
+         "Horizon focus (INT8)"    = "#d9822b",
+         "Horizon baseline (INT8)" = "#b9b9b9")
+
+theme_set(theme_minimal(base_size = 11, base_family = "Geist") +
+  theme(plot.title = element_text(face = "bold"),
+        panel.grid.minor = element_blank(),
+        panel.grid.major.x = element_blank(),
+        axis.title = element_text(colour = "#5f6368"),
+        axis.text = element_text(colour = "#3a3d40"),
+        strip.text = element_text(face = "bold", hjust = 0),
+        legend.position = "bottom", legend.title = element_blank()))
+update_geom_defaults("text", list(family = "Geist"))
+
+wilson <- function(k, n, z = 1.96) {
+  p <- k / n
+  d <- 1 + z^2 / n
+  centre <- (p + z^2 / (2 * n)) / d
+  half <- z * sqrt(p * (1 - p) / n + z^2 / (4 * n^2)) / d
+  tibble(lo = centre - half, hi = centre + half)
+}
+# LaTeX output numbers captions itself; keep the manual numbers for HTML only
+cap <- function(x) if (knitr::is_html_output()) x else sub("^(Table|Figure) [0-9]+\\. ", "", x)
+pct <- function(x, digits = 1) sprintf(paste0("%.", digits, "f%%"), 100 * x)
+```
+
+```{r data}
+# All numbers in this block come from docs/results/bench-report.json
+# (branch feat/launch-film, commit 6aa3267) and are summarised in docs/results/bench.md.
+# Vigil figures are summed or averaged over its three training seeds (b1-b3).
+acc <- tibble::tribble(
+  ~set, ~system, ~catch_k, ~catch_n, ~fa_k, ~fa_n, ~catch_any,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", 5109L, 5199L, 7L, 801L, 0.9992,
+  "Horizon sample", "Horizon focus (INT8)", 1628L, 1733L, 1L, 267L, 0.9988,
+  "Horizon sample", "Horizon baseline (INT8)", 1603L, 1733L, 37L, 267L, 0.9960,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", 1835L, 2052L, 51L, 441L, 0.9932,
+  "Llama-3.1-8B", "Horizon focus (INT8)", 463L, 684L, 31L, 147L, 0.9196,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", 445L, 684L, 43L, 147L, 0.8962,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", 1953L, 2100L, 77L, 450L, 0.9943,
+  "Qwen3-8B", "Horizon focus (INT8)", 438L, 700L, 30L, 150L, 0.8500,
+  "Qwen3-8B", "Horizon baseline (INT8)", 405L, 700L, 31L, 150L, 0.7629
+)
+
+percat <- tibble::tribble(
+  ~set, ~system, ~category, ~recall, ~precision,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", "grooming", 0.9617, 0.8467,
+  "Horizon sample", "Horizon focus (INT8)", "grooming", 0.7705, 1.0000,
+  "Horizon sample", "Horizon baseline (INT8)", "grooming", 0.7008, 1.0000,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", "bullying", 0.9905, 0.7451,
+  "Horizon sample", "Horizon focus (INT8)", "bullying", 0.9918, 0.9605,
+  "Horizon sample", "Horizon baseline (INT8)", "bullying", 0.9918, 0.8934,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", "sexual_content", 0.9588, 0.8145,
+  "Horizon sample", "Horizon focus (INT8)", "sexual_content", 0.9918, 0.7281,
+  "Horizon sample", "Horizon baseline (INT8)", "sexual_content", 0.9959, 0.7139,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", "isolation", 0.9841, 0.9541,
+  "Horizon sample", "Horizon focus (INT8)", "isolation", 0.9827, 0.9784,
+  "Horizon sample", "Horizon baseline (INT8)", "isolation", 0.9913, 0.9786,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", "personal_info", 0.9887, 0.8593,
+  "Horizon sample", "Horizon focus (INT8)", "personal_info", 0.9699, 0.9961,
+  "Horizon sample", "Horizon baseline (INT8)", "personal_info", 0.9774, 0.9028,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", "platform_migration", 0.9956, 0.9043,
+  "Horizon sample", "Horizon focus (INT8)", "platform_migration", 0.9956, 0.9956,
+  "Horizon sample", "Horizon baseline (INT8)", "platform_migration", 1.0000, 0.9956,
+  "Horizon sample", "Vigil (2-pass, 3 seeds)", "threats", 0.9976, 0.8045,
+  "Horizon sample", "Horizon focus (INT8)", "threats", 0.8853, 1.0000,
+  "Horizon sample", "Horizon baseline (INT8)", "threats", 0.8351, 0.9957,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", "grooming", 0.9524, 0.5472,
+  "Llama-3.1-8B", "Horizon focus (INT8)", "grooming", 0.5816, 0.5588,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", "grooming", 0.4694, 0.5542,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", "bullying", 0.9899, 0.4734,
+  "Llama-3.1-8B", "Horizon focus (INT8)", "bullying", 0.8990, 0.7946,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", "bullying", 0.8990, 0.6496,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", "sexual_content", 0.4519, 0.7648,
+  "Llama-3.1-8B", "Horizon focus (INT8)", "sexual_content", 0.7667, 0.4452,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", "sexual_content", 0.7444, 0.4718,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", "isolation", 1.0000, 0.8495,
+  "Llama-3.1-8B", "Horizon focus (INT8)", "isolation", 0.9100, 0.8585,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", "isolation", 0.7800, 0.8571,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", "personal_info", 0.9796, 0.6550,
+  "Llama-3.1-8B", "Horizon focus (INT8)", "personal_info", 0.8571, 0.7636,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", "personal_info", 0.8367, 0.7130,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", "platform_migration", 0.9832, 0.8471,
+  "Llama-3.1-8B", "Horizon focus (INT8)", "platform_migration", 0.6970, 0.8961,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", "platform_migration", 0.8384, 0.9121,
+  "Llama-3.1-8B", "Vigil (2-pass, 3 seeds)", "threats", 0.8633, 0.5570,
+  "Llama-3.1-8B", "Horizon focus (INT8)", "threats", 0.0400, 0.8000,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", "threats", 0.0000, 0.0000,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", "grooming", 0.9767, 0.6635,
+  "Qwen3-8B", "Horizon focus (INT8)", "grooming", 0.3600, 0.7200,
+  "Qwen3-8B", "Horizon baseline (INT8)", "grooming", 0.3200, 0.7442,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", "bullying", 0.9400, 0.4708,
+  "Qwen3-8B", "Horizon focus (INT8)", "bullying", 0.7000, 0.8140,
+  "Qwen3-8B", "Horizon baseline (INT8)", "bullying", 0.6600, 0.6804,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", "sexual_content", 0.6600, 0.6722,
+  "Qwen3-8B", "Horizon focus (INT8)", "sexual_content", 0.7900, 0.3873,
+  "Qwen3-8B", "Horizon baseline (INT8)", "sexual_content", 0.6500, 0.4140,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", "isolation", 0.9867, 0.8459,
+  "Qwen3-8B", "Horizon focus (INT8)", "isolation", 0.8600, 0.7963,
+  "Qwen3-8B", "Horizon baseline (INT8)", "isolation", 0.8100, 0.8710,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", "personal_info", 0.9867, 0.7215,
+  "Qwen3-8B", "Horizon focus (INT8)", "personal_info", 0.9000, 0.9091,
+  "Qwen3-8B", "Horizon baseline (INT8)", "personal_info", 0.7900, 0.8587,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", "platform_migration", 0.9667, 0.8065,
+  "Qwen3-8B", "Horizon focus (INT8)", "platform_migration", 0.7200, 0.9114,
+  "Qwen3-8B", "Horizon baseline (INT8)", "platform_migration", 0.7800, 0.9512,
+  "Qwen3-8B", "Vigil (2-pass, 3 seeds)", "threats", 0.9933, 0.4557,
+  "Qwen3-8B", "Horizon focus (INT8)", "threats", 0.0500, 0.7143,
+  "Qwen3-8B", "Horizon baseline (INT8)", "threats", 0.0400, 0.6667
+)
+
+parse_fail <- tibble::tribble(
+  ~set, ~system, ~unparsed,
+  "Horizon sample", "Horizon focus (INT8)", 9L,
+  "Horizon sample", "Horizon baseline (INT8)", 18L,
+  "Llama-3.1-8B", "Horizon focus (INT8)", 23L,
+  "Llama-3.1-8B", "Horizon baseline (INT8)", 46L,
+  "Qwen3-8B", "Horizon focus (INT8)", 85L,
+  "Qwen3-8B", "Horizon baseline (INT8)", 147L
+)
+
+speed <- tibble::tribble(
+  ~system, ~format, ~p50_ms, ~p95_ms, ~disk_mib, ~rss_mib,
+  "Vigil", "ONNX fp32", 207.4, 338.1, 1230.6, 2017.5,
+  "Horizon focus", "LiteRT-LM INT8", 747.2, 998.8, 1016.7, 2601.2,
+  "Horizon baseline", "LiteRT-LM INT8", 748.1, 1051.7, 1016.7, 2600.8
+)
+
+systems <- names(pal)
+acc <- acc %>%
+  mutate(system = factor(system, levels = systems),
+         set = factor(set, levels = c("Horizon sample", "Llama-3.1-8B", "Qwen3-8B")),
+         catch = catch_k / catch_n, fa = fa_k / fa_n,
+         # The three Vigil seeds score the same rows, so summed counts overstate the sample.
+         # Intervals use the per-seed mean counts (one run on the unique rows).
+         w = ifelse(grepl("^Vigil", system), 3, 1)) %>%
+  bind_cols(wilson(.$catch_k / .$w, .$catch_n / .$w) %>% rename(catch_lo = lo, catch_hi = hi),
+            wilson(.$fa_k / .$w, .$fa_n / .$w) %>% rename(fa_lo = lo, fa_hi = hi))
+percat <- percat %>%
+  mutate(system = factor(system, levels = systems),
+         set = factor(set, levels = levels(acc$set)))
+```
+
+# Summary
+
+**Vigil** and **Horizon** are two answers to the same product question: given a chat between a child
+and someone else, which of seven risks (grooming, bullying, sexual content, isolation, personal info,
+platform migration, threats) does it show, and how severe is it? They answer it with very different
+machinery.
+
+```{r kpis, results='asis'}
+v <- acc %>% filter(set == "Qwen3-8B")
+catch_gap <- 100 * (v$catch[v$system == levels(acc$system)[1]] - v$catch[v$system == levels(acc$system)[2]])
+speedup   <- speed$p50_ms[speed$system == "Horizon focus"] / speed$p50_ms[speed$system == "Vigil"]
+smaller   <- 100 * (1 - speed$disk_mib[speed$system == "Horizon focus"] / speed$disk_mib[speed$system == "Vigil"])
+unseen    <- acc %>% filter(set != "Horizon sample", system != "Horizon baseline (INT8)")
+fa_rng    <- sprintf("%.0f-%.0f%%", 100 * min(unseen$fa), 100 * max(unseen$fa))
+cards <- list(
+  list("vigil", "Vigil", sprintf("+%.0f pts", catch_gap), "more risky chats caught, correct category (Qwen3-8B set)", "vigil"),
+  list("vigil", "Vigil", sprintf("%.1fx faster", speedup), "median latency on the same 8-CPU node", "vigil"),
+  list("horizon", "Horizon", sprintf("%.0f%% smaller", smaller), "on disk (INT8 against Vigil fp32)", "horizon"),
+  list("both", "Neither", fa_rng, "benign chats flagged on unseen text; the target is 2%", "alarm"))
+if (knitr::is_html_output()) {
+  cat('<div class="kpis">',
+      sapply(cards, function(k) sprintf('<div class="kpi %s"><div class="w">%s</div><div class="n">%s</div><div class="l">%s</div></div>', k[[1]], k[[2]], k[[3]], k[[4]])),
+      '</div>', sep = "\n")
+} else {
+  esc <- function(x) gsub("%", "\\\\%", x, fixed = FALSE)
+  cat("\\noindent\n")
+  for (i in seq_along(cards)) {
+    k <- cards[[i]]
+    cat(sprintf("\\begin{minipage}[t]{0.235\\linewidth}{\\color{%s}\\rule{\\linewidth}{3pt}}\\par\\vspace{2pt}{\\tiny\\color{muted}\\bfseries %s}\\par{\\Large\\bfseries %s}\\par{\\scriptsize\\color{muted} %s}\\end{minipage}%s\n",
+                k[[5]], toupper(k[[2]]), esc(k[[3]]), esc(k[[4]]), if (i < length(cards)) "\\hfill" else ""))
+  }
+  cat("\n\\bigskip\n")
+}
+```
+
+| | **Horizon** | **Vigil** |
+|---|---|---|
+| Base model | Gemma 3 1B (mobile) / Llama 3.2 3B (server), decoder LLM | Laya-multilingual, 322M encoder (mmBERT-base) |
+| How it answers | generates a JSON string token by token | one forward pass, typed scores per category |
+| Adaptation | QLoRA fine-tune | full fine-tune plus a calibration step |
+| Output | `risk_level`, `categories`, `confidence` | per-category probability, severity, confidence |
+| Thresholds | none (fixed by training) | per-category, chosen on validation data |
+| Maturity | shipped on-device export (LiteRT-LM) | research; no phone measurement yet |
+
+**What the evidence says**, on identical chats, one metric implementation, and one 8-CPU node:
+
+1. **Vigil catches more risky chats with the correct category on every test set**, by 4.4 points on
+   Horizon's own sample and by 21.7 and 30.4 points on chats written by two models neither system
+   trained on.
+2. **Vigil is about 3.6 times faster on CPU** (207 ms against 747 ms median per chat) and uses less
+   memory (2,018 against 2,601 MiB), because it reads the chat once and does not generate text.
+3. **Horizon is smaller on disk** (1,017 against 1,231 MiB) and has the better false-alarm rate on its
+   own sample (0.4% against 0.9%).
+4. **Neither is good enough on unseen text.** Both flag 12-21% of harmless chats from the held-out
+   generators. The 2% target is missed by every system on both sets.
+5. **Everything is measured on LLM-written text.** Nothing here shows real-world performance, and
+   nothing here was run on a phone.
+
+The rest of this document lays out the design differences, the benchmark in detail, how Vigil got to
+its current state, where each system is weak, and a prioritised list of improvements for both.
+
+# Design comparison
+
+## Architecture
+
+```{r arch}
+arch <- tribble(
+  ~Aspect, ~Horizon, ~Vigil,
+  "Model family", "Decoder-only LLM (Gemma 3 1B mobile build; Llama 3.2 3B server build)", "Bidirectional encoder (mmBERT-base inside Laya-multilingual)",
+  "Parameters", "~1B (mobile) / ~3B (server)", "322M",
+  "Context window", "1,280 tokens (`ekv1280` export)", "1,024 tokens; overflow is flagged, never truncated silently",
+  "Inference style", "Autoregressive generation of a JSON answer", "Typed decisions in a single pass: `noul` (yes/no per category), `score` (severity), `choice`",
+  "Free text possible", "Yes, so the model can continue the chat or emit malformed JSON", "No: it only produces numbers, so output cannot be malformed",
+  "Multi-label", "Native (`categories` list)", "Native in the 8-question design; the 2-pass design shares one softmax across categories",
+  "Fine-tuning", "QLoRA (LoRA rank 128-256 on the server configs)", "Full fine-tune, cross-entropy plus RLCD term; temperatures fitted on a held-out slice",
+  "Threshold policy", "None. Operating point is whatever training produced", "Per-category thresholds under a 2% benign false-alarm budget on validation data",
+  "Export", "LiteRT-LM INT8 (Android, iOS), GGUF", "ONNX (parity with PyTorch verified); Core ML planned",
+  "Licence", "SafeCircle internal", "Apache-2.0 (base Laya and Vigil)"
+)
+knitr::kable(arch, caption = cap("Table 1. Architecture and tooling."))
+```
+
+Vigil's two question designs:
+
+- **8-question (`noul7`)**: seven yes/no questions plus severity = 8 encoder passes per chat. Closest to
+  the original spec and the most stable, but about 3x slower on CPU.
+- **2-pass (`choice8`)**: one 8-way choice (benign plus 7 categories) plus severity = 2 passes. This is
+  the design benchmarked against Horizon below. It is cheaper, but its softmax makes categories compete,
+  and its multi-label path is untested because the training data has at most one category per chat.
+
+## What each side offers beyond the model
+
+Vigil's design spec (§10) lists what it deliberately does *not* have. Horizon has these; Vigil does not:
+
+- regex rule pre-filter and adaptive tiers,
+- a TUI and remote SLURM tooling,
+- mobile benchmarking and profiling scripts,
+- a published data-generation pipeline (500K conversations, 8 categories, 60% English / 40% Spanish),
+- two shipped mobile sizes (INT8 about 1.2 GB, INT4 about 0.7 GB),
+- a refusal behaviour for off-task prompts (`{"error": ...}`).
+
+Vigil's own additions are the evaluation discipline: Wilson intervals, held-out generators, seed
+variance, a false-alarm budget rule, and an offline calibration experiment. Horizon's recorded results
+carry none of these.
+
+# Evaluation setup
+
+The comparison in this document uses the head-to-head benchmark run on one exclusive cluster node on
+2026-09-30.
+
+```{r setup-table}
+sets <- tribble(
+  ~Set, ~Rows, ~Benign, ~`Written by`, ~`Seen in training?`,
+  "Horizon sample", 2000, 267, "Horizon's generators (mostly Qwen2.5-7B, some Claude)", "Same distribution as both models' training data",
+  "Llama-3.1-8B", 831, 147, "Llama-3.1-8B-Instruct, fresh prompts", "No, for both systems",
+  "Qwen3-8B", 850, 150, "Qwen3-8B, same prompts as the Llama set", "No, for both (but close to Horizon's Qwen family)"
+)
+knitr::kable(sets, format.args = list(big.mark = ","), caption = cap("Table 2. Test sets (all LLM-written; none are real conversations)."))
+```
+
+**Protocol**
+
+- **Same chats, same metric code.** Both systems are scored by the same code. Horizon outputs
+  categories, so a predicted category counts as probability 1. A risk level with no category counts as
+  a flag (a false alarm on benign rows, never a correct catch). Unparseable output predicts nothing,
+  the same rule as Horizon's own benchmark.
+- **Vigil**: the 2-pass design with educational hard negatives, three training seeds, thresholds from
+  the greedy 2% rule picked on validation data (not on these sets).
+- **Horizon**: the deployed INT8 LiteRT-LM export with its own prompt and parser, greedy decoding. Two
+  builds: **focus** (current) and **baseline** (the build behind Horizon's recorded results).
+- **Speed and size**: one exclusive 8-CPU node, GPU unused, 300 chats, wall time with the model loaded.
+- **Metrics**: *catch (correct category)* is the share of risky chats where at least one gold category
+  is flagged. *Benign false alarms* is the share of benign chats where anything is flagged.
+  Intervals are 95% Wilson intervals.
+
+# Results
+
+## Accuracy
+
+```{r acc-table}
+acc %>%
+  transmute(Set = set, System = system,
+            `Catch (correct)` = sprintf("%s (%s-%s)", pct(catch), pct(catch_lo), pct(catch_hi)),
+            `Counts` = sprintf("%s / %s", format(catch_k, big.mark = ","), format(catch_n, big.mark = ",")),
+            `Benign false alarms` = sprintf("%s (%s-%s)", pct(fa), pct(fa_lo), pct(fa_hi)),
+            `FA counts` = sprintf("%d / %d", fa_k, fa_n),
+            `Catch (any category)` = pct(catch_any)) %>%
+  knitr::kable(align = "llrrrrr",
+               caption = cap("Table 3. Headline accuracy. Vigil counts are summed over 3 seeds (denominators 3x larger), but its intervals are computed from the per-seed mean counts, because the seeds score the same rows."))
+```
+
+```{r acc-plot, fig.height=4.6, fig.cap=cap("Figure 1. Risky chats caught with the correct category (higher is better). Bars show 95% Wilson intervals.")}
+ggplot(acc, aes(set, catch, fill = system)) +
+  geom_col(position = position_dodge(0.8), width = 0.75) +
+  geom_errorbar(aes(ymin = catch_lo, ymax = catch_hi), position = position_dodge(0.8), width = 0.25) +
+  geom_text(aes(label = pct(catch, 1)), position = position_dodge(0.8), vjust = -1.6, size = 3) +
+  scale_fill_manual(values = pal) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 1.08), breaks = seq(0, 1, .2)) +
+  labs(x = NULL, y = "Catch (correct category)")
+```
+
+```{r fa-plot, fig.cap=cap("Figure 2. Benign chats wrongly flagged (lower is better). The dashed line is the 2% target.")}
+ggplot(acc, aes(set, fa, fill = system)) +
+  geom_col(position = position_dodge(0.8), width = 0.75) +
+  geom_errorbar(aes(ymin = fa_lo, ymax = fa_hi), position = position_dodge(0.8), width = 0.25) +
+  geom_hline(yintercept = 0.02, linetype = "dashed") +
+  geom_text(aes(label = pct(fa, 1)), position = position_dodge(0.8), vjust = -1.4, size = 3) +
+  scale_fill_manual(values = pal) +
+  scale_y_continuous(labels = scales::percent, limits = c(0, 0.5)) +
+  labs(x = NULL, y = "Benign false alarms")
+```
+
+Reading it:
+
+- **Vigil dominates on recall.** On the unseen sets its interval for catch lies far above Horizon's
+  (for example Llama: 89.4% against 67.7%, with intervals that do not come close to overlapping).
+- **False alarms are a mixed picture.** On Horizon's own sample Horizon-focus is better (1 of 267
+  against 7 of 801, so a handful of rows; the intervals overlap). On the unseen sets Vigil's rate is
+  lower in the point estimate but the intervals overlap with Horizon-focus's (Llama 11.6% against
+  21.1%; Qwen3 17.1% against 20.0%). Every system misses the 2% target on unseen text.
+- **The two Horizon builds differ mostly in false alarms on its own sample**, where the baseline
+  flags 13.9% of benign chats and focus 0.4%.
+
+### Is Horizon missing chats, or naming the wrong category?
+
+```{r any-vs-correct}
+acc %>%
+  filter(system != "Horizon baseline (INT8)") %>%
+  transmute(Set = set, System = system,
+            `Catch (any flag)` = pct(catch_any), `Catch (correct category)` = pct(catch),
+            `Gap (points)` = sprintf("%.1f", 100 * (catch_any - catch))) %>%
+  knitr::kable(align = "llrrr", caption = cap("Table 4. Credit for any flag against credit for the right category."))
+```
+
+The question matters because the benchmark credits Horizon only when it names a gold category. If Horizon
+is credited with *any* flag, its focus build reaches 99.9% / 92.0% / 85.0%. So much of Horizon's gap on
+unseen text is **wrong categories and unparseable output**, not chats it never noticed. Vigil's
+any-flag figure is 99.3-99.9%, but that is partly bought with its false-alarm rate (it flags a lot).
+
+```{r parse-table}
+parse_fail %>%
+  mutate(system = factor(system, levels = systems)) %>%
+  pivot_wider(names_from = set, values_from = unparsed) %>%
+  arrange(system) %>%
+  rename(`Horizon build` = system) %>%
+  knitr::kable(caption = cap("Table 5. Horizon outputs that did not parse (rows with no usable answer). None were runtime errors: truncated JSON, malformed keys, runaway numbers, or the model continuing the chat."))
+```
+
+Unparseable output grows from 9 rows (0.5%) on Horizon's own sample to 85 (10%) on Qwen3 for the focus
+build, and to 147 (17%) for the baseline. Vigil cannot fail this way: its output is numbers.
+
+## Per-category recall and precision
+
+```{r percat-plot, fig.height=6.4, fig.cap=cap("Figure 3. Recall by category and set. `sexual_content` labels on the two unseen sets are weak (see text).")}
+percat %>%
+  mutate(category = factor(category, levels = rev(c("grooming", "bullying", "sexual_content", "isolation",
+                                                    "personal_info", "platform_migration", "threats")))) %>%
+  ggplot(aes(recall, category, colour = system, shape = system)) +
+  geom_point(size = 2.8, alpha = .9) +
+  facet_wrap(~ set, ncol = 1) +
+  scale_colour_manual(values = pal) +
+  scale_x_continuous(labels = scales::percent, limits = c(0, 1)) +
+  labs(x = "Recall", y = NULL)
+```
+
+```{r percat-wide}
+percat %>%
+  filter(system != "Horizon baseline (INT8)") %>%
+  mutate(cell = sprintf("%s / %s", pct(recall, 0), pct(precision, 0))) %>%
+  select(set, category, system, cell) %>%
+  pivot_wider(names_from = system, values_from = cell) %>%
+  arrange(set, match(category, c("grooming", "bullying", "sexual_content", "isolation",
+                                 "personal_info", "platform_migration", "threats"))) %>%
+  rename(Set = set, Category = category) %>%
+  knitr::kable(caption = cap("Table 6. Recall / precision per category (Vigil mean of 3 seeds; Horizon focus build)."))
+```
+
+The pattern that matters:
+
+- **Threats.** Horizon-focus recall falls from 88.5% on its own sample to **4.0% on Llama and 5.0% on
+  Qwen3**. Vigil holds 86% and 99%. This is the largest single gap in the benchmark, and a worrying one
+  for a category about violence.
+- **Grooming.** Horizon-focus recall is 77.0% on its own sample and 58.2% / 36.0% on the unseen sets;
+  Vigil's is 96.2% / 95.2% / 97.7%. Horizon's grooming precision is 100% on its own sample (it flags
+  rarely) and that is a different operating point rather than a better model.
+- **Platform migration, isolation and personal info.** Horizon is competitive on its own sample and
+  loses 10-30 points on the unseen sets.
+- **Bullying and `sexual_content`.** Horizon is as good or better in-distribution. `sexual_content`
+  labels in the Llama and Qwen3 sets are unreliable (the generators softened or refused the request),
+  so read those rows as weak. Vigil's low `sexual_content` recall on the unseen sets
+  (45-66%) is partly a label problem and partly a real gap; the evidence cannot separate the two.
+- **Precision is lower for Vigil on the unseen sets** (for example bullying precision 47% against 80%
+  for Horizon on Llama). It trades precision for recall at its 2% validation budget.
+
+## Operating points
+
+```{r op-plot, fig.cap=cap("Figure 4. False alarms against catch. Up and to the left is better. Each dot is one system on one set.")}
+ggplot(acc, aes(fa, catch, colour = system, shape = set)) +
+  geom_point(size = 3.4) +
+  geom_vline(xintercept = 0.02, linetype = "dashed", colour = "grey50") +
+  scale_colour_manual(values = pal) +
+  scale_x_continuous(labels = scales::percent) +
+  scale_y_continuous(labels = scales::percent, limits = c(0.5, 1)) +
+  labs(x = "Benign false alarms", y = "Catch (correct category)") +
+  guides(shape = guide_legend(title = NULL)) +
+  theme(legend.box = "vertical")
+```
+
+On its own sample both systems are in the corner that matters. On unseen text both drift right
+(more false alarms), but Vigil keeps its height and Horizon loses it. So Vigil's operating point is
+better in the sense that it is not dominated anywhere: higher catch at similar or lower false alarms.
+
+## Speed, size and memory
+
+```{r speed-table}
+speed %>%
+  transmute(System = system, Format = format,
+            `p50 (ms)` = sprintf("%.0f", p50_ms), `p95 (ms)` = sprintf("%.0f", p95_ms),
+            `On disk (MiB)` = format(round(disk_mib), big.mark = ","),
+            `Peak memory (MiB)` = format(round(rss_mib), big.mark = ",")) %>%
+  knitr::kable(align = "llrrrr", caption = cap("Table 7. One 8-CPU node, CPU only, 300 chats, model preloaded."))
+```
+
+```{r speed-plot, fig.height=3.4, fig.cap=cap("Figure 5. Median and 95th-percentile latency per chat on the same CPU node.")}
+speed %>%
+  filter(system != "Horizon baseline") %>%
+  pivot_longer(c(p50_ms, p95_ms), names_to = "stat", values_to = "ms") %>%
+  mutate(stat = recode(stat, p50_ms = "p50", p95_ms = "p95")) %>%
+  ggplot(aes(system, ms, fill = stat)) +
+  geom_col(position = position_dodge(0.7), width = 0.65) +
+  geom_text(aes(label = sprintf("%.0f ms", ms)), position = position_dodge(0.7), vjust = -0.4, size = 3.2) +
+  scale_fill_manual(values = c(p50 = "#1b6ca8", p95 = "#8db8d8")) +
+  scale_y_continuous(limits = c(0, 1200)) +
+  labs(x = NULL, y = "Milliseconds per chat")
+```
+
+- **Vigil is 3.6x faster at the median** because it reads the chat once and writes no tokens, and
+  Horizon generates a JSON string.
+- **Format is not like-for-like.** Vigil runs in fp32 and Horizon in INT8. A Vigil ONNX file at lower
+  precision would be smaller, but dynamic int8 was tested and is not the answer (below).
+- **Size is Horizon's advantage today**: 1,017 against 1,231 MiB. The 50 MB target in Vigil's spec is
+  out of reach without distillation.
+- **These are server CPUs, not phones.** Both numbers will be worse on a phone, and Horizon's INT8
+  LiteRT-LM export is the only one with a proven on-device path.
+
+## Against the targets in Vigil's spec
+
+```{r targets}
+targets <- tribble(
+  ~Metric, ~`Horizon recorded`, ~`Vigil target`, ~`Vigil measured`, ~Status,
+  "Grooming recall", "90.36% (issue #8)", ">= 97%", "96.2% on Horizon sample, 95.2% Llama, 97.7% Qwen3 (3-seed mean; below 97% on two of three sets)", "Close, not proven",
+  "Catch rate", "12.90% (regex rules only, not a model)", ">= 80%", "98.3% / 89.4% / 93.0% (correct category)", "Met, on synthetic text",
+  "Latency on-device", "2.1 s", "<= 500 ms", "207 ms p50 on a server CPU; 10.6 ms on a GPU (pilot checkpoint); phones unmeasured", "Server met, device unknown",
+  "Disk", "1,017 MiB", "as small as possible", "1,231 MiB fp32; 883 MB dynamic int8 (not useful)", "Not met; larger than Horizon",
+  "Benign false alarms", "n/a", "2% (budget)", "0.9% in-distribution; 11.6% / 17.1% unseen", "Met in-distribution only"
+)
+knitr::kable(targets, caption = cap("Table 8. Spec targets against measured results."))
+```
+
+One caution on the first two rows. Horizon's 12.90% was its regex pre-filter, not the model, so it is
+not comparable. And Horizon's recorded grooming recall of 90.36% was **not reproduced** here: even the
+baseline build behind that figure scored 70.1% grooming recall on 2,000 rows of its own sample. The
+likely suspects are a different evaluation sample, a different operating point and a different matching
+rule, but none of those has been checked. Treat the recorded figure as a number from another protocol.
+
+# How Vigil got here
+
+Vigil's current numbers are the end of a series of rounds. Each round changed one thing, and several of
+them corrected earlier readings. Read this as a map of what has and has not moved the needle.
+
+```{r journey-data}
+journey <- tribble(
+  ~step, ~label, ~set, ~fa, ~catch,
+  1, "Pilot thresholds\n(Horizon data only)", "Llama-3.1-8B", 86.4, 85.7,
+  1, "Pilot thresholds\n(Horizon data only)", "Qwen3-8B", 94.7, 83.4,
+  2, "+ Mistral/Gemma data,\nmixed validation", "Llama-3.1-8B", 37.4, 83.9,
+  2, "+ Mistral/Gemma data,\nmixed validation", "Qwen3-8B", 40.0, 88.9,
+  3, "2% budget\n(precision rule)", "Llama-3.1-8B", 17.7, 82.2,
+  3, "2% budget\n(precision rule)", "Qwen3-8B", 20.0, 82.7,
+  4, "+ safety benign scenes,\nFalcon3 validation", "Llama-3.1-8B", 10.2, 82.2,
+  4, "+ safety benign scenes,\nFalcon3 validation", "Qwen3-8B", 11.3, 86.1,
+  5, "Greedy per-category rule,\nPhi/SmolLM3 validation", "Llama-3.1-8B", 12.9, 87.9,
+  5, "Greedy per-category rule,\nPhi/SmolLM3 validation", "Qwen3-8B", 18.0, 90.4,
+  6, "Cleaned data, retrain\n(round 4, greedy)", "Llama-3.1-8B", 11.6, 85.1,
+  6, "Cleaned data, retrain\n(round 4, greedy)", "Qwen3-8B", 16.7, 88.3,
+  7, "3-seed mean\n(current data)", "Llama-3.1-8B", 11.6, 85.7,
+  7, "3-seed mean\n(current data)", "Qwen3-8B", 15.3, 87.4,
+  8, "+ educational hard negatives\n(3 seeds)", "Llama-3.1-8B", 11.6, 89.5,
+  8, "+ educational hard negatives\n(3 seeds)", "Qwen3-8B", 17.1, 93.0,
+  9, "+ friendly banter data\n(3 seeds)", "Llama-3.1-8B", 12.0, 93.5,
+  9, "+ friendly banter data\n(3 seeds)", "Qwen3-8B", 19.3, 95.9
+)
+```
+
+```{r journey-plot, fig.height=5.2, fig.cap=cap("Figure 6. The 2-pass design on the two held-out generators across the rounds. Benign false alarms (red) and catch with the correct category (blue). Seed noise is 1-3 points on false alarms and up to 5 on catch with the precision rule, so small steps are not meaningful.")}
+journey %>%
+  pivot_longer(c(fa, catch), names_to = "metric", values_to = "value") %>%
+  mutate(metric = recode(metric, fa = "Benign false alarms", catch = "Catch (correct category)")) %>%
+  ggplot(aes(step, value, colour = metric)) +
+  geom_line(linewidth = .8) + geom_point(size = 2) +
+  facet_wrap(~ set, ncol = 1) +
+  scale_colour_manual(values = c("Benign false alarms" = "#c0392b", "Catch (correct category)" = "#1b6ca8")) +
+  scale_x_continuous(breaks = 1:9) +
+  labs(x = "Round (see Table 9)", y = "%")
+```
+
+```{r journey-table}
+journey %>%
+  distinct(step, label) %>%
+  mutate(label = gsub("\n", " ", label)) %>%
+  rename(Round = step, Change = label) %>%
+  knitr::kable(caption = cap("Table 9. Rounds plotted in Figure 6."))
+```
+
+## Lessons the rounds taught
+
+1. **In-distribution numbers were inflated by generator similarity.** The pilot reported AUC 0.993-1.000
+   and about 1% false alarms; a different generator exposed 38% (8-question) and 86% (2-pass). Ranking
+   transferred, operating points did not.
+2. **Multi-generator training fixed most of the threshold shift** (86% to 37% false alarms for the
+   2-pass design) without hurting in-distribution results.
+3. **A validation false-alarm budget is a floor, not a promise.** A 1.5-1.8% validation rate gave 3-24%
+   on held-out generators. The gap shrinks only when validation includes generators the model has not
+   seen *and* that write risky chats.
+4. **Run-to-run noise is real.** Cleaning 0.5% of the training rows and retraining moved results as much
+   as most differences between configurations. Over 3 seeds, false alarms vary by 1-3 points (sd) and
+   catch with the precision rule by up to 5. The greedy rule is the stable one.
+5. **More benign data is a weak lever for false alarms.** It raised the 2-pass design's catch by 4-6
+   points, but did not reduce false alarms overall.
+6. **Half of the remaining false alarms sit in one scene**: friends teasing each other (about 50%
+   flagged for the 2-pass design). A blind audit of 46 of those rows found 43 friendly, 3 unclear and 0
+   cruel, so these are mostly real model errors. An earlier claim that this was label noise was wrong and
+   has been corrected.
+7. **Per-deployment calibration does not get to 2%.** Adding 100-400 labelled rows from the target
+   traffic cut false alarms by 0-8 points, usually for about the same loss in recall. Some benign chats
+   simply score like risky ones.
+8. **A second-stage confirmer works but was dropped.** An offline cascade (Vigil flags, the 27B OpenJev
+   model confirms) brought false alarms to 0.0-1.3% on all three sets, for a loss of 3-8 points of
+   catch. It was dropped for licence (CC BY-NC 4.0) and cost reasons.
+
+```{r evo-note, results='asis'}
+cat("*Note on int8:* dynamic int8 ONNX quantization shrank the file only to 883 MB (the large multilingual",
+    "embedding table stays fp32) and moved probabilities by up to 0.66, so it is not used.\n")
+```
+
+# Where each system is weak
+
+## Horizon
+
+| Weakness | Evidence |
+|---|---|
+| **Collapses on unseen text for some categories** | Threats recall 88.5% on its own sample, 4.0% (Llama) and 5.0% (Qwen3). Grooming 77.0% to 36-58%. |
+| **Malformed output** | 0.5% of rows unparseable on its own sample, 10% on Qwen3 (focus build), 17% for the baseline. |
+| **False alarms on unseen text** | 20-21% of benign chats flagged (focus), 29% (baseline, Llama). |
+| **Latency** | 747 ms p50 and 999 ms p95 on a CPU node; 3.6x Vigil's. |
+| **Memory** | 2,601 MiB peak against Vigil's 2,018 MiB. |
+| **No score to tune** | Horizon outputs categories, not probabilities. The only operating-point knob is retraining or prompt changes. |
+| **Recorded results not reproducible here** | 90.36% grooming recall recorded; 70.1% measured for the baseline build on 2,000 of its own rows. |
+
+## Vigil
+
+| Weakness | Evidence |
+|---|---|
+| **High false alarms on unseen text** | 11.6% (Llama), 17.1% (Qwen3) against a 2% target. At 1% real prevalence this means most flags are false (pilot estimate: 21-36% of flags real). |
+| **Thresholds do not transfer across generators** | Fitted on validation data; false alarms 2-16x higher on held-out generators. |
+| **Teasing banter** | About 50% of the "friends joking" scene is flagged, whatever data is added. |
+| **Larger on disk than Horizon** | 1,231 MiB fp32; the multilingual embedding table dominates, and dynamic int8 does not help. |
+| **Short context** | 1,024 tokens covers a message or short excerpt, not a long conversation. |
+| **Severity is weak** | Macro-F1 0.63-0.67 in the pilot; generated severity labels are unreliable. |
+| **Unproven multi-label behaviour** | Training data has at most one category per chat; the 2-pass soft-target path is untested. |
+| **Not on a phone** | No Core ML or Android measurement exists. |
+| **Lower precision on unseen sets** | Bullying precision 47%, threats 46-56%, grooming 55-66% on the held-out sets. |
+
+## What is true for both
+
+- All test text is LLM-written, with labels set by construction. Real conversations are the deciding test.
+- Both inherit label-quality problems from Horizon's dataset (Horizon's own analysis found weak grooming
+  recall and missing patterns for bullying and personal info).
+- The Llama and Qwen3 sets have 147-150 benign rows each, so false-alarm intervals are wide (about
+  +-6 points).
+- No overlap audit beyond exact matches: paraphrased templates between train and eval were not tested.
+
+\newpage
+
+# Improvements
+
+Ordered by expected value against evidence, not by effort. Each item says what it fixes and what would
+confirm it worked. Items marked *untested* are hypotheses, not findings.
+
+## For Vigil
+
+```{r vigil-improvements}
+vimp <- tribble(
+  ~`#`, ~Improvement, ~`What it fixes`, ~`How to confirm`, ~Cost,
+  1, "**Evaluate on real or human-written conversations** (even a few hundred, labelled by people), including real teasing and real grooming transcripts", "Every number here rests on synthetic text. This is the only thing that can change a decision.", "Same benchmark, same metric code, on the human set", "High (data, consent, annotators)",
+  2, "**Choose the operating point as a product decision**, then ship two thresholds: a high-recall alert and a high-precision escalation", "The data shows the curve; it cannot pick the point. Today's single point is whatever the greedy rule produced.", "Review a false-alarms-per-real-flag table with product and safety owners", "Low",
+  3, "**Add a second-stage confirmer** with a permissive licence for chats Vigil flags", "False alarms: the only thing that cut them to 0-1.3% (OpenJev cascade), for a 3-8 point loss in catch. Only flagged chats pay for it.", "Offline cascade on saved scores first (cheap), then measure real latency and share of traffic forwarded", "Medium",
+  4, "**Fix the teasing scene on the model side**: relabel or drop truly cruel rows, add human-written friendly banter, and try a contrastive loss for banter against bullying", "About half of all remaining false alarms. More generated data did not move it (41-52%), so the generator text may not match real banter (*untested*).", "Teasing-scene false alarms below 20% on both held-out generators, across 3 seeds", "Medium",
+  5, "**Per-deployment threshold sets with upweighted deployment rows**", "Threshold transfer. At weight 10 and 400 rows it halved false alarms in the best case but cost 9 points of catch.", "Only worth it if the recall loss is acceptable; measure on a deployment sample", "Low",
+  6, "**Shrink the model**: prune the vocabulary to English and Spanish, then distil to a smaller encoder", "Disk. The multilingual embedding table is why int8 stays at 883 MB (*untested* that pruning removes most of it).", "ONNX size and parity (max probability difference below 0.05) on the pruned model", "Medium-high",
+  7, "**Measure on a phone**: Core ML on iOS and ONNX Runtime on Android", "Spec phase 2. Server-CPU latency says little about devices.", "p50 and p95 latency, memory and battery on two reference devices", "Medium",
+  8, "**Window long conversations** instead of dropping overflow", "1,024-token ceiling; real chats are longer.", "Recall on a long-conversation set (not yet built)", "Medium",
+  9, "**Retrain severity on reliable labels** and add a multi-label training set", "Severity macro-F1 0.63-0.67 and untested multi-label behaviour.", "Severity macro-F1 on human labels; recall on chats with 2+ categories", "Medium",
+  10, "**Standardise reporting**: 3 seeds, intervals, a held-out generator not used for any decision, and an overlap audit for near-duplicates", "Round 4 showed that single runs mislead.", "Report template and CI check", "Low"
+)
+knitr::kable(vimp, caption = cap("Table 10. Proposed improvements for Vigil."))
+```
+
+## For Horizon
+
+These come from where it fell short in this benchmark, and several can borrow from Vigil's approach.
+
+```{r horizon-improvements}
+himp <- tribble(
+  ~`#`, ~Improvement, ~`What it fixes`, ~`How to confirm`,
+  1, "**Constrained decoding** (a JSON grammar) or a structured-output head", "5-17% unparseable output on unseen text. These rows count as misses.", "Unparseable rate of 0% on the same three sets",
+  2, "**Fix the threats category**: add hard negatives and unseen-style threats, and audit what the model outputs for threats on the held-out sets", "Threats recall of 4-5% on unseen text is a failure, not noise.", "Threats recall above 80% on Llama and Qwen3",
+  3, "**Add a confidence score that can be thresholded**: read token probabilities of the category tokens", "Horizon has one operating point and no way to trade recall for false alarms.", "A recall/false-alarm curve with at least 3 usable points",
+  4, "**Train on more generators and report held-out ones**, as Vigil did", "In-distribution results overstate performance. Vigil's pilot fell from 1% to 38-86% false alarms on a new generator.", "Held-out Llama and Qwen3 numbers beside the in-distribution ones",
+  5, "**Re-derive the recorded results with the shared metric code**", "The recorded 90.36% grooming recall was not reproduced (70.1% for the baseline build).", "A reconciliation note naming the protocol differences",
+  6, "**Add a pre-filter for the easy majority** (benign chats), for example a small encoder in front of the LLM", "Latency and energy: 747 ms p50 for every chat, including the obviously benign ones.", "Share of chats skipped and end-to-end p50",
+  7, "**Consider Vigil as the first stage** and keep Horizon for flagged chats where generated explanations are wanted", "Combines Vigil's recall and speed with Horizon's flexibility.", "Offline cascade on saved outputs, then device cost"
+)
+knitr::kable(himp, caption = cap("Table 11. Proposed improvements for Horizon."))
+```
+
+## A combined system
+
+The two are more complementary than competing, and the evidence suggests a three-tier shape:
+
+1. **Vigil on every chat**, on the device or the nearest server: one pass, 207 ms on a CPU node, 99%
+   any-flag recall.
+2. **A confirmer on flagged chats only**: Horizon (already on devices), or a permissively licensed model
+   if a stronger one is needed.
+3. **Human review** of confirmed high-severity flags.
+
+This is not tested end to end. What exists is an offline cascade of Vigil with a third model (OpenJev:
+0.0-1.3% false alarms) and the benchmark above. The first experiment is the same offline cascade with
+Horizon as the confirmer, using the saved benchmark outputs, which costs no new compute.
+
+# Decision guide
+
+```{r decision}
+dec <- tribble(
+  ~`If you care most about...`, ~Choose, ~Because,
+  "Catching risky chats, especially threats and grooming, on unseen text", "Vigil", "+21.7 / +30.4 points of catch on held-out generators; threats 86-99% against 4-5%",
+  "Speed on a server CPU", "Vigil", "207 ms against 747 ms median",
+  "Smallest download", "Horizon", "1,017 MiB against 1,231 MiB (fp32 Vigil)",
+  "A proven on-device path today", "Horizon", "LiteRT-LM INT8 export exists; Vigil has no phone measurement",
+  "Fewest false alarms on its own data", "Horizon (focus)", "0.4% against 0.9%, but the difference is a handful of rows",
+  "Fewest false alarms on unseen text", "Neither", "Both flag 12-21%; only a confirmer got below 2%",
+  "Never emitting malformed output", "Vigil", "It returns numbers, not text",
+  "Explanations in text", "Horizon", "It is generative; Vigil is not"
+)
+knitr::kable(dec, caption = cap("Table 12. Which system for which priority."))
+```
+
+> **Bottom line.** On the evidence collected, Vigil is the stronger detector and the faster one, and
+> Horizon is the smaller and more deployable one today. Neither has been measured on real conversations
+> or on a phone, and neither reaches the false-alarm target on text it has not seen. The next
+> evidence that changes this picture is a human-written test set and an on-device measurement, not
+> another round of tuning on synthetic data.
+
+# Sources
+
+- **Head-to-head benchmark (2026-09-30):** per-set, per-seed and per-category counts, plus latency, disk and
+  memory, from one run on an exclusive 8-CPU node. All accuracy and speed tables and Figures 1-5 come from it.
+- **Vigil's development rounds:** the written results of each round (pilot, cross-generator test, mixed
+  training, false-alarm budget, rounds 2-4, seeds and hard negatives, friendly banter, per-deployment
+  calibration). Figure 6 is typed in from these and is not part of the benchmark data.
+- **OpenJev cascade:** the zero-shot baseline and offline cascade results on a separate branch.
+- **Design and targets:** Vigil's design specification of 2026-09-29.
+- **Horizon:** its current README and the benchmark above. An earlier research paper in its repository
+  describes a MobileBERT design that the Gemma 3 1B build replaced; it was not used for any number.
+
+If a later round changes the figures in *How Vigil got here*, update the `journey` table in the source
+file's data chunk.
+
+```{r session, results="asis"}
+cat("Rendered with", R.version.string, "\n")
+```

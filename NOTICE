@@ -1,0 +1,5 @@
+scripts/export_onnx.py is from https://github.com/NandhaKishorM/laya
+(commit 9d955671415fc19f069b9cc998928075c1f255ec), Apache License 2.0.
+
+Modified by Vigil: the dummy tracing inputs use batch size 2 instead of 1. With batch 1 the
+exporter specialises the batch dimension and the exported graph fails for any real batch > 1.

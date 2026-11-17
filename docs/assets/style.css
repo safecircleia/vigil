@@ -1,0 +1,63 @@
+/* SafeCircle research report: monochrome with the Vigil blue / Horizon orange data colours */
+:root { --ink:#0b0b0c; --muted:#5f6368; --line:#e4e4e7; --wash:#f6f6f7; --vigil:#1b6ca8; --horizon:#d9822b; }
+body { font-family: Geist, "Inter", system-ui, -apple-system, "Segoe UI", sans-serif; color: var(--ink);
+       font-size: 15.5px; line-height: 1.65; background:#fff; }
+.main-container { max-width: 1040px; }
+code, pre, tt { font-family: "Geist Mono", ui-monospace, "SFMono-Regular", Menlo, monospace; font-size: .86em; }
+code { background: var(--wash); color: var(--ink); border: 1px solid var(--line); border-radius: 4px; padding: .05em .35em; }
+a { color: var(--vigil); }
+
+/* Masthead */
+.sc-masthead { display:flex; align-items:center; justify-content:space-between; gap:24px;
+               padding: 26px 0 18px; border-bottom: 2px solid var(--ink); margin-bottom: 8px; }
+.sc-masthead img { height: 38px; width:auto; }
+.sc-masthead .tag { font-size: 12px; letter-spacing:.14em; text-transform:uppercase; color: var(--muted); text-align:right; }
+#header { padding: 28px 0 6px; }
+#header h1.title { font-weight: 700; font-size: 2.5rem; letter-spacing: -.02em; line-height:1.1; margin: 0 0 10px; border:0; padding:0; }
+#header h3.subtitle { font-weight: 400; color: var(--muted); font-size: 1.2rem; margin: 0 0 14px; }
+#header h4.author, #header h4.date { color: var(--muted); font-size: .9rem; font-weight: 500; margin: 0 14px 0 0; display:inline-block; }
+
+/* Headings */
+h1 { font-weight: 700; letter-spacing:-.015em; margin-top: 2.6rem; padding-bottom:.35rem; border-bottom: 1px solid var(--line); }
+h2 { font-weight: 650; margin-top: 2rem; }
+h3 { font-weight: 600; margin-top: 1.5rem; color:#222; }
+h1 .header-section-number, h2 .header-section-number, h3 .header-section-number { color: var(--muted); font-weight: 500; margin-right:.5em; }
+
+/* Table of contents */
+#TOC { font-size: 13.5px; }
+.list-group-item { border-color: var(--line); }
+.list-group-item.active, .list-group-item.active:hover, .list-group-item.active:focus
+  { background: var(--ink); border-color: var(--ink); color:#fff; }
+
+/* Tables */
+table { width: 100%; border-collapse: collapse; margin: 1.1rem 0 1.6rem; font-size: 13.5px; line-height:1.45; }
+table caption { caption-side: top; text-align:left; color: var(--muted); font-size: 12.5px; padding: 0 0 .5rem; }
+table th { background: var(--ink); color:#fff; font-weight:600; text-align:left; padding: 8px 10px; border: 0; }
+table td { padding: 7px 10px; border: 0; border-bottom: 1px solid var(--line); vertical-align: top; }
+table tr:nth-child(even) td { background: var(--wash); }
+table td:first-child { font-weight: 500; }
+.table > :not(caption) > * > * { border-bottom-width: 0; }
+
+/* Figures */
+img { max-width:100%; }
+.figure, div.figure { margin: 1.4rem 0; }
+p.caption { color: var(--muted); font-size: 12.5px; text-align:left; }
+
+/* Callout (blockquote) */
+blockquote { border: 0; border-left: 4px solid var(--ink); background: var(--wash); padding: 14px 18px; margin: 1.4rem 0;
+             font-size: 15px; border-radius: 0 6px 6px 0; }
+blockquote p:last-child { margin-bottom:0; }
+
+/* KPI cards */
+.kpis { display:grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin: 1.4rem 0 1.8rem; }
+.kpi { border:1px solid var(--line); border-top: 4px solid var(--ink); border-radius: 6px; padding: 14px 14px 12px; background:#fff; }
+.kpi.vigil { border-top-color: var(--vigil); } .kpi.horizon { border-top-color: var(--horizon); } .kpi.both { border-top-color:#c0392b; }
+.kpi .n { font-size: 1.9rem; font-weight: 700; letter-spacing:-.02em; line-height:1.05; }
+.kpi .l { font-size: 12.5px; color: var(--muted); margin-top: 6px; line-height:1.35; }
+.kpi .w { font-size: 10.5px; letter-spacing:.12em; text-transform:uppercase; color: var(--muted); margin-bottom: 6px; }
+@media (max-width: 800px) { .kpis { grid-template-columns: repeat(2, 1fr); } .sc-masthead { flex-direction:column; align-items:flex-start; } }
+
+/* Footer */
+.sc-footer { margin: 3rem 0 2rem; padding-top: 14px; border-top: 1px solid var(--line); color: var(--muted); font-size: 12.5px;
+             display:flex; justify-content:space-between; align-items:center; }
+.sc-footer img { height: 20px; opacity:.85; }

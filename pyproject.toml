@@ -1,0 +1,42 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "vigil"
+version = "0.1.0"
+description = "Vigil: Laya-based typed-decision child-safety classifier"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+license-files = ["LICENSE", "NOTICE"]
+dependencies = [
+  "laya>=0.3.21",
+  "torch",
+  "transformers>=4.48",
+  "safetensors",
+  "huggingface_hub",
+  "datasets>=3.0",
+  "scipy",
+  "numpy",
+  "pyarrow>=25.0.1",
+]
+
+[project.optional-dependencies]
+export = [
+    "onnx>=1.23.0",
+    "onnxruntime>=1.30.0",
+    "onnxscript>=0.7.2",
+]
+
+[dependency-groups]
+dev = ["pytest"]
+
+[tool.setuptools.packages.find]
+include = ["vigil*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+markers = [
+  "integration: needs the Laya checkpoint from the Hugging Face Hub",
+  "slow: runs a real (tiny) training loop",
+]

@@ -1,0 +1,58 @@
+\usepackage{fontspec}
+\setmainfont{Geist}[Scale=0.98,BoldFont={Geist SemiBold}]
+\setsansfont{Geist}[BoldFont={Geist SemiBold}]
+\setmonofont{Geist Mono}[Scale=0.84]
+\usepackage{graphicx}
+\usepackage[table]{xcolor}
+\usepackage{etoolbox}
+\usepackage{fancyhdr}
+\usepackage{titlesec}
+\usepackage{mdframed}
+\usepackage{microtype}
+\definecolor{ink}{HTML}{0B0B0C}
+\definecolor{muted}{HTML}{5F6368}
+\definecolor{wash}{HTML}{F4F4F5}
+\definecolor{vigil}{HTML}{1B6CA8}
+\definecolor{horizon}{HTML}{D9822B}
+\definecolor{alarm}{HTML}{C0392B}
+\renewcommand{\familydefault}{\sfdefault}
+\setlength{\parskip}{0.55em}\setlength{\parindent}{0pt}
+\linespread{1.12}
+
+% headings
+\titleformat{\section}{\Large\bfseries\color{ink}}{\thesection}{0.7em}{}[{\color{ink}\titlerule[0.6pt]}]
+\titleformat{\subsection}{\large\bfseries\color{ink}}{\thesubsection}{0.7em}{}
+\titleformat{\subsubsection}{\normalsize\bfseries\color{muted}}{\thesubsubsection}{0.7em}{}
+\titlespacing*{\section}{0pt}{2.2em}{0.8em}
+\titlespacing*{\subsection}{0pt}{1.6em}{0.4em}
+
+% running header / footer
+\AtBeginDocument{\setlength{\headheight}{22pt}\addtolength{\topmargin}{-10pt}}
+\pagestyle{fancy}\fancyhf{}
+\fancyhead[L]{\raisebox{-0.25\height}{\includegraphics[height=0.42cm]{assets/safecircle-logo.png}}}
+\fancyhead[R]{\small\color{muted}Vigil vs Horizon}
+\fancyfoot[L]{\footnotesize\color{muted}Research report, 2026-10-01}
+\fancyfoot[R]{\footnotesize\color{muted}\thepage}
+\renewcommand{\headrulewidth}{0.4pt}\renewcommand{\footrulewidth}{0pt}
+\renewcommand{\headrule}{\hbox to\headwidth{\color{ink}\leaders\hrule height \headrulewidth\hfill}}
+\fancypagestyle{plain}{\fancyhf{}\fancyfoot[R]{\footnotesize\color{muted}\thepage}\renewcommand{\headrulewidth}{0pt}}
+
+% tables: smaller type, roomier rows, zebra, dark header
+\renewcommand{\arraystretch}{1.28}
+\AtBeginEnvironment{longtable}{\footnotesize\rowcolors{2}{wash}{white}}
+\setlength{\tabcolsep}{5pt}
+\setlength{\LTpre}{0.4em}\setlength{\LTpost}{0.9em}
+
+% callouts
+\renewenvironment{quote}{\begin{mdframed}[hidealllines=true,leftline=true,linewidth=3pt,linecolor=ink,
+  backgroundcolor=wash,innerleftmargin=10pt,innerrightmargin=10pt,innertopmargin=8pt,innerbottommargin=8pt,
+  skipabove=8pt,skipbelow=8pt]}{\end{mdframed}}
+
+% captions
+\usepackage{caption}
+\captionsetup{font={footnotesize,color=muted},labelfont=bf,justification=raggedright,singlelinecheck=false}
+
+% title page
+\makeatletter
+\renewcommand{\maketitle}{}
+\makeatother
